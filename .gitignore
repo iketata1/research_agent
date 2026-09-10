@@ -20,6 +20,9 @@ config/config.yaml
 data/*
 !data/.gitkeep
 
+# Rapports generes
+reports/
+
 # Tests / couverture
 .pytest_cache/
 .coverage
