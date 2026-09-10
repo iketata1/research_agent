@@ -43,7 +43,12 @@ class Database:
     """
 
     def __init__(self, path: Union[str, Path]) -> None:
-        self.path = Path(path)
+        # ":memory:" designe une base en memoire (utile pour les tests).
+        self.is_memory = str(path) == ":memory:"
+        self.path = path if self.is_memory else Path(path)
+        # En mode memoire, on conserve une connexion unique persistante : sinon
+        # la base disparaitrait a la fermeture de chaque connexion.
+        self._mem_conn: Optional[sqlite3.Connection] = None
 
     @classmethod
     def from_config(cls, config: Optional[DatabaseConfig] = None) -> "Database":
@@ -63,18 +68,26 @@ class Database:
         Cree l'arborescence parente si necessaire, ouvre une connexion (ce qui
         cree le fichier) puis applique les migrations pour garantir le schema.
         """
-        try:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            raise DatabaseError(
-                f"impossible de creer le dossier de base : {self.path.parent}"
-            ) from exc
+        if not self.is_memory:
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                raise DatabaseError(
+                    f"impossible de creer le dossier de base : {self.path.parent}"
+                ) from exc
         with self.connection() as conn:
             version = run_migrations(conn)
         logger.info("Base de donnees initialisee : %s (schema v%d)", self.path, version)
 
     def _connect(self) -> sqlite3.Connection:
-        """Ouvre une connexion SQLite configuree (pragmas)."""
+        """Ouvre une connexion SQLite configuree (pragmas).
+
+        En mode memoire, une connexion unique persistante est reutilisee afin
+        que les donnees survivent entre les appels de `connection()`.
+        """
+        if self.is_memory and self._mem_conn is not None:
+            return self._mem_conn
+
         conn = sqlite3.connect(
             self.path,
             timeout=_BUSY_TIMEOUT_MS / 1000,
@@ -83,9 +96,14 @@ class Database:
         # Acces aux colonnes par nom (row["title"]).
         conn.row_factory = sqlite3.Row
         # Pragmas de robustesse et de concurrence.
-        conn.execute("PRAGMA journal_mode=WAL;")
+        # WAL n'a pas de sens pour une base en memoire ; on ne l'active que sur fichier.
+        if not self.is_memory:
+            conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA foreign_keys=ON;")
         conn.execute(f"PRAGMA busy_timeout={_BUSY_TIMEOUT_MS};")
+
+        if self.is_memory:
+            self._mem_conn = conn
         return conn
 
     @contextmanager
@@ -111,8 +129,16 @@ class Database:
                 conn.rollback()
             raise DatabaseError(f"erreur SQLite : {exc}") from exc
         finally:
-            if conn is not None:
+            # En mode memoire, on garde la connexion unique ouverte (sinon la
+            # base serait perdue). En mode fichier, on ferme systematiquement.
+            if conn is not None and not self.is_memory:
                 conn.close()
+
+    def close(self) -> None:
+        """Ferme la connexion memoire persistante, le cas echeant."""
+        if self._mem_conn is not None:
+            self._mem_conn.close()
+            self._mem_conn = None
 
 
 def initialize_database(config: Optional[DatabaseConfig] = None) -> Database:
