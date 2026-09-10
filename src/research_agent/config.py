@@ -91,6 +91,24 @@ class DeliveryConfig(BaseModel):
         return value
 
 
+class LLMConfig(BaseModel):
+    """Parametres du fournisseur LLM (API compatible OpenAI : OpenAI, Mistral...).
+
+    Les tarifs servent a estimer le cout ; ils s'expriment en euros (ou dollars)
+    par million de tokens, valeurs a ajuster selon le fournisseur/modele choisi.
+    """
+
+    base_url: str = "https://api.openai.com/v1"
+    model: str = "gpt-4o-mini"
+    max_tokens: int = Field(default=512, ge=1)
+    temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    timeout: float = Field(default=30.0, gt=0.0)
+    max_retries: int = Field(default=4, ge=0, le=10)
+    # Tarifs par million de tokens (entree / sortie).
+    price_per_1m_input: float = Field(default=0.15, ge=0.0)
+    price_per_1m_output: float = Field(default=0.60, ge=0.0)
+
+
 class PreFilterConfig(BaseModel):
     """Regles du pre-filtre deterministe (applique avant le LLM).
 
@@ -124,6 +142,7 @@ class AppConfig(BaseModel):
     """Racine de la configuration fonctionnelle (issue du YAML)."""
 
     keywords: Keywords = Field(default_factory=Keywords)
+    llm: LLMConfig = Field(default_factory=LLMConfig)
     prefilter: PreFilterConfig = Field(default_factory=PreFilterConfig)
     relevance_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     sources: Dict[str, SourceConfig] = Field(default_factory=dict)
