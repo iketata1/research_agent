@@ -84,9 +84,49 @@ CREATE INDEX IF NOT EXISTS idx_runs_started_at ON runs (started_at);
 """
 
 
+# --- Recherche plein texte FTS5 (migration v2) -------------------------------
+
+# Table virtuelle FTS5 en mode "contenu externe" : le texte n'est pas duplique,
+# FTS5 lit directement dans `items` via le rowid. Des triggers maintiennent
+# l'index synchronise a chaque insertion / mise a jour / suppression.
+_V2_SQL = """
+CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
+    title,
+    raw_text,
+    content='items',
+    content_rowid='rowid'
+);
+
+-- Synchronisation : nouvel item -> indexe.
+CREATE TRIGGER IF NOT EXISTS items_ai AFTER INSERT ON items BEGIN
+    INSERT INTO items_fts (rowid, title, raw_text)
+    VALUES (new.rowid, new.title, new.raw_text);
+END;
+
+-- Synchronisation : item supprime -> retire de l'index.
+CREATE TRIGGER IF NOT EXISTS items_ad AFTER DELETE ON items BEGIN
+    INSERT INTO items_fts (items_fts, rowid, title, raw_text)
+    VALUES ('delete', old.rowid, old.title, old.raw_text);
+END;
+
+-- Synchronisation : item modifie -> reindexe (delete puis insert).
+CREATE TRIGGER IF NOT EXISTS items_au AFTER UPDATE ON items BEGIN
+    INSERT INTO items_fts (items_fts, rowid, title, raw_text)
+    VALUES ('delete', old.rowid, old.title, old.raw_text);
+    INSERT INTO items_fts (rowid, title, raw_text)
+    VALUES (new.rowid, new.title, new.raw_text);
+END;
+
+-- Reindexation des items eventuellement deja presents avant la creation de l'index.
+INSERT INTO items_fts (rowid, title, raw_text)
+SELECT rowid, title, raw_text FROM items;
+"""
+
+
 # Liste ordonnee des migrations : (version, description, SQL).
 MIGRATIONS: List[Tuple[int, str, str]] = [
     (1, "schema initial : items, summaries, runs", _V1_SQL),
+    (2, "recherche plein texte FTS5 (items_fts + triggers)", _V2_SQL),
 ]
 
 
