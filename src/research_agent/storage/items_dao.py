@@ -323,3 +323,71 @@ def delete_item(item_id: str, db: Database) -> bool:
     with db.connection() as conn:
         cursor = conn.execute("DELETE FROM items WHERE id = ?;", (item_id,))
         return cursor.rowcount > 0
+
+
+def save_enriched_item(
+    item_id: str,
+    db: Database,
+    score: int,
+    theme: Theme,
+    status: ItemStatus,
+    justification: Optional[str] = None,
+    theme_confidence: Optional[float] = None,
+) -> bool:
+    """Persiste de maniere transactionnelle l'enrichissement LLM d'un item.
+
+    Enregistre en une seule operation :
+    - `relevance` (score normalise [0, 1] a partir du score 0-100) ;
+    - `theme` (categorie) et `status` (statut final de traitement) ;
+    - les details LLM dans `metadata` (score brut 0-100, justification, confiance),
+      en preservant les metadonnees existantes (tracabilite collecte + pre-filtre).
+
+    Args:
+        item_id: identifiant de l'item a enrichir.
+        db: base cible.
+        score: score de pertinence 0-100 calcule par le LLM.
+        theme: categorie attribuee.
+        status: statut final (ex. KEPT / DROPPED).
+        justification: justification courte du score (optionnel).
+        theme_confidence: confiance de la classification [0, 1] (optionnel).
+
+    Returns:
+        True si l'item existait et a ete mis a jour, False sinon.
+
+    Raises:
+        ValueError: si `score` est hors de [0, 100].
+    """
+    if not 0 <= score <= 100:
+        raise ValueError("score doit etre dans l'intervalle [0, 100].")
+
+    relevance = score / 100.0
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT metadata FROM items WHERE id = ?;", (item_id,)
+        ).fetchone()
+        if row is None:
+            return False
+
+        # Fusion des metadonnees existantes avec les details LLM (tracabilite).
+        try:
+            metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+        except (ValueError, TypeError):
+            metadata = {}
+        metadata["llm_score"] = score
+        if justification is not None:
+            metadata["llm_justification"] = justification
+        if theme_confidence is not None:
+            metadata["theme_confidence"] = theme_confidence
+
+        conn.execute(
+            "UPDATE items SET relevance = ?, theme = ?, status = ?, metadata = ? "
+            "WHERE id = ?;",
+            (
+                relevance,
+                theme.value,
+                status.value,
+                json.dumps(metadata, ensure_ascii=False),
+                item_id,
+            ),
+        )
+    return True
