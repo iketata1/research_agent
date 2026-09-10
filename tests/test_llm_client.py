@@ -151,3 +151,50 @@ def test_missing_api_key_raises():
     client = LLMClient(config=_config(), api_key=None)
     with pytest.raises(LLMError):
         client.complete("x")
+
+
+# --- Facade generate() -------------------------------------------------------
+
+
+def test_generate_returns_text_only():
+    client = _client()
+    with patch.object(client.client, "post", return_value=_ok_response(text="reponse")):
+        result = client.generate("bonjour", system_prompt="tu es utile")
+    assert result == "reponse"
+    # Le suivi des couts reste mis a jour meme via la facade.
+    assert client.usage.requests == 1
+
+
+def test_generate_missing_api_key_raises():
+    client = LLMClient(config=_config(), api_key=None)
+    with pytest.raises(LLMError):
+        client.generate("x")
+
+
+def test_per_call_temperature_and_max_tokens_override():
+    client = _client()
+    captured = {}
+
+    def capture(url, json=None, headers=None):
+        captured.update(json)
+        return _ok_response()
+
+    with patch.object(client.client, "post", side_effect=capture):
+        client.generate("x", temperature=0.9, max_tokens=42)
+    assert captured["temperature"] == 0.9
+    assert captured["max_tokens"] == 42
+
+
+def test_defaults_used_when_no_override():
+    client = _client()
+    captured = {}
+
+    def capture(url, json=None, headers=None):
+        captured.update(json)
+        return _ok_response()
+
+    with patch.object(client.client, "post", side_effect=capture):
+        client.complete("x")
+    # Valeurs par defaut issues de la config.
+    assert captured["temperature"] == client.config.temperature
+    assert captured["max_tokens"] == client.config.max_tokens

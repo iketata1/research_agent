@@ -109,12 +109,16 @@ class LLMClient:
         self,
         prompt: str,
         system: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
     ) -> LLMResponse:
-        """Envoie une requete de completion et renvoie la reponse.
+        """Envoie une requete de completion et renvoie la reponse detaillee.
 
         Args:
             prompt: message utilisateur.
             system: message systeme optionnel (instructions).
+            temperature: temperature ; par defaut celle de la config.
+            max_tokens: nombre max de tokens generes ; par defaut celui de la config.
 
         Returns:
             La reponse du LLM, avec tokens et cout.
@@ -134,11 +138,43 @@ class LLMClient:
         payload = {
             "model": self.config.model,
             "messages": messages,
-            "max_tokens": self.config.max_tokens,
-            "temperature": self.config.temperature,
+            "max_tokens": max_tokens if max_tokens is not None else self.config.max_tokens,
+            "temperature": temperature if temperature is not None else self.config.temperature,
         }
         data = self._request_with_retry(payload)
         return self._parse_response(data)
+
+    def generate(
+        self,
+        prompt: str,
+        system_prompt: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+    ) -> str:
+        """Facade simple : envoie un prompt et renvoie uniquement le texte genere.
+
+        Pratique lorsqu'on n'a besoin que de la reponse textuelle (le suivi des
+        tokens/couts reste mis a jour en interne via `complete`).
+
+        Args:
+            prompt: message utilisateur.
+            system_prompt: instructions systeme optionnelles.
+            temperature: temperature ; par defaut celle de la config.
+            max_tokens: nombre max de tokens generes ; par defaut celui de la config.
+
+        Returns:
+            Le texte de la reponse du LLM.
+
+        Raises:
+            LLMError: en cas d'echec (voir `complete`).
+        """
+        response = self.complete(
+            prompt,
+            system=system_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return response.text
 
     def _request_with_retry(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Effectue l'appel HTTP avec reessais (backoff exponentiel + jitter)."""
