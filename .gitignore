@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environnements virtuels
+.venv/
+venv/
+env/
+
+# Configuration locale et secrets
+config/config.yaml
+.env
+*.key
+
+# Donnees locales (base de donnees, caches)
+data/*
+!data/.gitkeep
+
+# Tests / couverture
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store

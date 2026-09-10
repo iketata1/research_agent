@@ -1,0 +1,63 @@
+# Configuration du Research Intelligence Agent
+# Copiez ce fichier vers config/config.yaml et adaptez-le.
+# Ce fichier ne contient AUCUN secret (les secrets vont dans .env).
+# Il est charge, type et valide par src/research_agent/config.py (AppConfig).
+
+# Mots-cles de pre-filtrage (multilingues NL / EN / DE).
+# Un item ne contenant aucun de ces termes est ecarte AVANT l'appel LLM,
+# ce qui limite le volume envoye au LLM et donc le cout.
+keywords:
+  nl: [schimmel, vocht, ventilatie, luchtkwaliteit, huurcommissie, vochtproblemen]
+  en: [mould, mold, humidity, damp, dampness, ventilation, air quality, indoor air]
+  de: [schimmel, feuchtigkeit, luftqualitat, luftung, schimmelpilz]
+
+# Seuil de pertinence (score LLM entre 0.0 et 1.0) au-dela duquel un item
+# est conserve pour le rapport.
+relevance_threshold: 0.5
+
+# Base de connaissances (SQLite). Chemin relatif a la racine du projet
+# (ou chemin absolu). Le dossier est cree automatiquement si absent.
+database:
+  path: "data/knowledge_base.db"
+
+# Sources actives et leurs parametres.
+# - query      : requete texte pour les APIs interrogeables
+# - feed_url   : URL du flux pour les sources RSS
+# - max_results: plafond d'items collectes par execution (1..1000)
+sources:
+  openalex:
+    enabled: true
+    query: "mould OR humidity OR indoor air quality"
+    max_results: 50
+  tenderned:
+    enabled: true
+    feed_url: "https://www.tenderned.nl/rss"
+    max_results: 100
+  ted:
+    enabled: true
+    query: "humidity monitoring OR ventilation OR indoor air quality"
+    max_results: 100
+  google_news:
+    enabled: true
+    query: "schimmel woning OR mould housing"
+    max_results: 50
+  aedes:
+    enabled: true
+    feed_url: "https://www.aedes.nl/rss"
+    max_results: 50
+  rechtspraak:
+    enabled: true
+    query: "schimmel huurwoning"
+    max_results: 50
+
+# Livraison du rapport hebdomadaire.
+delivery:
+  channel: telegram          # telegram | email
+  telegram:
+    # Le token du bot est un secret (.env : TELEGRAM_BOT_TOKEN).
+    # Le chat_id peut etre place ici OU dans .env (TELEGRAM_CHAT_ID).
+    chat_id: ""
+  email:
+    recipients: []           # ex. ["veille@intra-air.example"]
+    smtp_host: ""
+    smtp_port: 587

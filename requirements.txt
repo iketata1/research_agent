@@ -1,0 +1,20 @@
+# --- Clients HTTP (APIs OpenAlex, TED, Rechtspraak...) ---
+requests>=2.31
+httpx>=0.27
+
+# --- Parsing des flux RSS (TenderNed, Google News, Aedes) ---
+feedparser>=6.0
+
+# --- Modeles de donnees & validation (schema pivot, config typee) ---
+pydantic>=2.7
+pydantic-settings>=2.3
+
+# --- Configuration ---
+PyYAML>=6.0
+python-dotenv>=1.0
+
+# --- Livraison du rapport (Telegram) ---
+python-telegram-bot>=21.0
+
+# --- Tests ---
+pytest>=8.0
