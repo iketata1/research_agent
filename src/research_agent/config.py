@@ -91,6 +91,21 @@ class DeliveryConfig(BaseModel):
         return value
 
 
+class PreFilterConfig(BaseModel):
+    """Regles du pre-filtre deterministe (applique avant le LLM).
+
+    - required : au moins un de ces termes DOIT etre present (si la liste est non
+      vide). Sert a garantir l'ancrage sur le domaine metier.
+    - optional : termes qui augmentent la pertinence ; si `required` est vide,
+      la presence d'au moins un `optional` suffit a passer.
+    - excluded : la presence d'un de ces termes provoque un rejet immediat.
+    """
+
+    required: List[str] = Field(default_factory=list)
+    optional: List[str] = Field(default_factory=list)
+    excluded: List[str] = Field(default_factory=list)
+
+
 class DatabaseConfig(BaseModel):
     """Parametres de la base de connaissances (SQLite pour le MVP).
 
@@ -109,6 +124,7 @@ class AppConfig(BaseModel):
     """Racine de la configuration fonctionnelle (issue du YAML)."""
 
     keywords: Keywords = Field(default_factory=Keywords)
+    prefilter: PreFilterConfig = Field(default_factory=PreFilterConfig)
     relevance_threshold: float = Field(default=0.5, ge=0.0, le=1.0)
     sources: Dict[str, SourceConfig] = Field(default_factory=dict)
     delivery: DeliveryConfig = Field(default_factory=DeliveryConfig)

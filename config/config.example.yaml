@@ -11,6 +11,15 @@ keywords:
   en: [mould, mold, humidity, damp, dampness, ventilation, air quality, indoor air]
   de: [schimmel, feuchtigkeit, luftqualitat, luftung, schimmelpilz]
 
+# Pre-filtre deterministe (gratuit), applique AVANT le LLM pour ecarter le bruit.
+# - required : au moins un de ces termes doit etre present (ancrage metier)
+# - optional : utilises si `required` est vide (au moins un doit etre present)
+# - excluded : la presence d'un de ces termes provoque un rejet immediat
+prefilter:
+  required: [schimmel, mould, mold, vocht, humidity, damp, ventilatie, ventilation, luchtkwaliteit, "indoor air"]
+  optional: []
+  excluded: [advertentie, reclame, sponsored]
+
 # Seuil de pertinence (score LLM entre 0.0 et 1.0) au-dela duquel un item
 # est conserve pour le rapport.
 relevance_threshold: 0.5
