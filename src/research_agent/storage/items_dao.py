@@ -29,6 +29,14 @@ class ItemStatus(str, Enum):
     DROPPED = "dropped"      # juge non pertinent, ecarte
 
 
+class UpsertResult(str, Enum):
+    """Issue d'un upsert, pour le logging et les statistiques de run."""
+
+    INSERTED = "inserted"    # nouvelle ressource
+    UNCHANGED = "unchanged"  # ressource connue, contenu identique (vrai doublon)
+    UPDATED = "updated"      # ressource connue, contenu modifie -> rafraichie
+
+
 def _to_row(item: RawItem, status: ItemStatus) -> Dict[str, Any]:
     """Convertit un RawItem en dictionnaire de colonnes pour la table `items`."""
     return {
@@ -43,6 +51,7 @@ def _to_row(item: RawItem, status: ItemStatus) -> Dict[str, Any]:
         "theme": item.theme.value,
         "relevance": item.relevance,
         "status": status.value,
+        "content_hash": item.content_hash(),
     }
 
 
@@ -100,6 +109,94 @@ def insert_items(
         if insert_item(item, db, status=status):
             inserted += 1
     return inserted
+
+
+def upsert_item(
+    item: RawItem,
+    db: Database,
+    status: ItemStatus = ItemStatus.COLLECTED,
+) -> UpsertResult:
+    """Insere ou rafraichit un item selon l'evolution de son contenu.
+
+    Trois cas :
+    - ressource inconnue -> insertion (INSERTED) ;
+    - ressource connue, meme content_hash -> rien a faire (UNCHANGED) ;
+    - ressource connue, content_hash different -> le contenu est rafraichi et le
+      statut repasse a COLLECTED pour re-filtrage. Les champs enrichis par le LLM
+      (relevance, theme) sont preserves (UPDATED).
+
+    La ressource est reperee par son `id` puis, a defaut, par son `url`.
+
+    Args:
+        item: element normalise.
+        db: base cible.
+        status: statut applique lors d'une insertion neuve.
+
+    Returns:
+        Le resultat de l'operation (voir `UpsertResult`).
+    """
+    row = _to_row(item, status)
+    new_hash = row["content_hash"]
+
+    with db.connection() as conn:
+        existing = conn.execute(
+            "SELECT id, content_hash FROM items WHERE id = ? OR url = ? LIMIT 1;",
+            (item.id, str(item.url)),
+        ).fetchone()
+
+        if existing is None:
+            columns = ", ".join(row.keys())
+            placeholders = ", ".join(f":{k}" for k in row)
+            conn.execute(
+                f"INSERT INTO items ({columns}) VALUES ({placeholders});", row
+            )
+            return UpsertResult.INSERTED
+
+        if existing["content_hash"] == new_hash:
+            return UpsertResult.UNCHANGED
+
+        # Contenu modifie : on rafraichit le contenu et on repasse a COLLECTED.
+        # On preserve relevance/theme (travail LLM deja effectue).
+        conn.execute(
+            "UPDATE items SET "
+            "  title = :title,"
+            "  raw_text = :raw_text,"
+            "  language = :language,"
+            "  metadata = :metadata,"
+            "  published_at = :published_at,"
+            "  content_hash = :content_hash,"
+            "  status = :status,"
+            "  updated_at = datetime('now') "
+            "WHERE id = :existing_id;",
+            {
+                "title": row["title"],
+                "raw_text": row["raw_text"],
+                "language": row["language"],
+                "metadata": row["metadata"],
+                "published_at": row["published_at"],
+                "content_hash": new_hash,
+                "status": ItemStatus.COLLECTED.value,
+                "existing_id": existing["id"],
+            },
+        )
+        return UpsertResult.UPDATED
+
+
+def upsert_items(
+    items: List[RawItem],
+    db: Database,
+    status: ItemStatus = ItemStatus.COLLECTED,
+) -> Dict[str, int]:
+    """Upsert une liste d'items et retourne le compte par type de resultat.
+
+    Returns:
+        Un dict {"inserted": n, "unchanged": n, "updated": n}.
+    """
+    counts = {r.value: 0 for r in UpsertResult}
+    for item in items:
+        result = upsert_item(item, db, status=status)
+        counts[result.value] += 1
+    return counts
 
 
 # --- Read --------------------------------------------------------------------

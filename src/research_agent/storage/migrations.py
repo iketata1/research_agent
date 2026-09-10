@@ -123,10 +123,23 @@ SELECT rowid, title, raw_text FROM items;
 """
 
 
+# --- Suivi des mises a jour de contenu (migration v3) ------------------------
+
+# `content_hash` : empreinte du contenu (title + raw_text) pour distinguer un
+# vrai doublon d'une ressource dont le contenu a change (upsert).
+# `updated_at` : horodatage de la derniere modification de contenu.
+_V3_SQL = """
+ALTER TABLE items ADD COLUMN content_hash TEXT;
+ALTER TABLE items ADD COLUMN updated_at TEXT;
+CREATE INDEX IF NOT EXISTS idx_items_content_hash ON items (content_hash);
+"""
+
+
 # Liste ordonnee des migrations : (version, description, SQL).
 MIGRATIONS: List[Tuple[int, str, str]] = [
     (1, "schema initial : items, summaries, runs", _V1_SQL),
     (2, "recherche plein texte FTS5 (items_fts + triggers)", _V2_SQL),
+    (3, "suivi des mises a jour de contenu (content_hash, updated_at)", _V3_SQL),
 ]
 
 

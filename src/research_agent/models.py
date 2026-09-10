@@ -121,3 +121,16 @@ class RawItem(BaseModel):
                 title=self.title,
             )
         return self
+
+    def content_hash(self) -> str:
+        """Empreinte du contenu porteur de sens (titre + texte).
+
+        Sert a distinguer un vrai doublon d'une ressource dont le contenu a
+        change. La `metadata` volatile est volontairement exclue pour eviter
+        de fausses detections de modification.
+
+        Returns:
+            Empreinte SHA-256 hexadecimale (16 caracteres).
+        """
+        normalized = f"{self.title.strip().lower()}\n{self.raw_text.strip().lower()}"
+        return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]

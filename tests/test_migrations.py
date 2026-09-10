@@ -29,7 +29,7 @@ def test_schema_version_recorded(tmp_path):
         version = conn.execute(
             "SELECT MAX(version) AS v FROM schema_version;"
         ).fetchone()["v"]
-    assert version == 2
+    assert version == 3
 
 
 def test_migrations_are_idempotent(tmp_path):
@@ -39,9 +39,9 @@ def test_migrations_are_idempotent(tmp_path):
     with db.connection() as conn:
         final = run_migrations(conn)
         count = conn.execute("SELECT COUNT(*) AS n FROM schema_version;").fetchone()["n"]
-    # Deux migrations appliquees (v1 + v2), version finale = 2.
-    assert final == 2
-    assert count == 2
+    # Trois migrations appliquees (v1 + v2 + v3), version finale = 3.
+    assert final == 3
+    assert count == 3
 
 
 def test_unique_url_prevents_duplicates(tmp_path):
