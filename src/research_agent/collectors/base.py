@@ -102,9 +102,18 @@ class BaseConnector(abc.ABC):
 
     @property
     def client(self) -> httpx.Client:
-        """Client HTTP `httpx` partage, cree a la demande, avec timeout."""
+        """Client HTTP `httpx` partage, cree a la demande.
+
+        Suit les redirections (les flux RSS officiels redirigent souvent, ex.
+        TenderNed/Aedes) et envoie un User-Agent explicite (certaines sources
+        rejettent les requetes sans UA).
+        """
         if self._client is None:
-            self._client = httpx.Client(timeout=self.timeout)
+            self._client = httpx.Client(
+                timeout=self.timeout,
+                follow_redirects=True,
+                headers={"User-Agent": "ResearchIntelligenceAgent/1.0 (+Intra-Air)"},
+            )
         return self._client
 
     def close(self) -> None:
