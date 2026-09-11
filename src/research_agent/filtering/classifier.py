@@ -6,7 +6,7 @@ d'Intra-Air, correspondant a l'enum `Theme` :
 - research     : articles scientifiques, etudes ;
 - opportunity  : appels d'offres, marches publics ;
 - legal        : decisions de justice (ECLI), lois, decrets ;
-- technology   : nouvelles solutions, capteurs IoT, actualites techniques.
+- technology   : nouvelles methodes/solutions techniques, actualites du secteur.
 
 Le LLM renvoie un JSON structure (label strict + niveau de confiance), valide par
 Pydantic. Un label hors des quatre choix retombe sur `Theme.UNKNOWN`.
@@ -38,7 +38,7 @@ SYSTEM_PROMPT = (
     "- research : articles scientifiques, etudes, publications academiques ;\n"
     "- opportunity : appels d'offres, marches publics, tenders ;\n"
     "- legal : decisions de justice (ECLI), lois, decrets, reglementations ;\n"
-    "- technology : nouvelles solutions, capteurs IoT, actualites techniques.\n\n"
+    "- technology : nouvelles methodes/solutions techniques, actualites du secteur.\n\n"
     "Reponds UNIQUEMENT avec un objet JSON de la forme :\n"
     '{"classifications": [{"index": <int>, "category": '
     '"research|opportunity|legal|technology", "confidence": <float 0-1>}]}\n'

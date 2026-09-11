@@ -180,7 +180,7 @@ def main() -> None:
             Theme.OPPORTUNITY.value: "🏢 OPPORTUNITÉS (tenders, marchés)",
             Theme.LEGAL.value: "⚖️ JURIDIQUE (décisions, réglementation)",
             Theme.RESEARCH.value: "🔬 RECHERCHE (science)",
-            Theme.TECHNOLOGY.value: "📡 TECHNOLOGIE (capteurs, solutions)",
+            Theme.TECHNOLOGY.value: "📡 TECHNOLOGIE (méthodes, secteur)",
             Theme.UNKNOWN.value: "📌 AUTRES",
         }
         groups = {}

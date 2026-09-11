@@ -2,8 +2,8 @@
 
 Pour chaque item ayant passe les filtres de la Phase 4, produit un resume
 ultra-concis de STRICTEMENT 3 lignes, oriente valeur metier : impact direct ou
-opportunite concrete pour Intra-Air (qualite d'air interieur, ventilation,
-moisissures, capteurs IoT, marches publics).
+opportunite commerciale concrete pour Intra-Air (besoin d'inspection humidite/
+moisissure/ventilation/odeurs, marches publics, obligations des bailleurs).
 
 La sortie est validee par un modele Pydantic (`Summary`) qui garantit la
 contrainte des 3 lignes : la reponse du LLM est normalisee (lignes vides
@@ -30,12 +30,12 @@ logger = get_logger(__name__)
 SUMMARY_LINES = 3
 
 SYSTEM_PROMPT = (
-    "Tu es un analyste pour Intra-Air, entreprise neerlandaise de detection de "
-    "l'humidite et des moisissures dans le logement via capteurs IoT. Pour le "
-    "document fourni, redige un resume de STRICTEMENT 3 lignes, chacune tres "
-    "courte. Chaque ligne doit mettre en avant l'impact direct ou l'opportunite "
-    "concrete pour Intra-Air (qualite d'air interieur, ventilation, moisissures, "
-    "capteurs, marches publics, obligations legales des bailleurs). Sois factuel "
+    "Tu es un analyste pour Intra-Air, entreprise neerlandaise qui realise des "
+    "INSPECTIONS d'humidite/moisissure, de ventilation et d'odeurs dans le "
+    "logement. Pour le document fourni, redige un resume de STRICTEMENT 3 lignes, "
+    "chacune tres courte. Chaque ligne doit mettre en avant l'impact direct ou "
+    "l'opportunite commerciale concrete pour Intra-Air (besoin d'inspection, "
+    "marches publics, obligations legales des bailleurs). Sois factuel "
     "et oriente action. Reponds UNIQUEMENT avec un objet JSON de la forme :\n"
     '{"lines": ["ligne 1", "ligne 2", "ligne 3"]}'
 )
