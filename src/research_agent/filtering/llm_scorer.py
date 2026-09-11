@@ -109,7 +109,7 @@ def _parse_scores(raw: str) -> Dict[int, ScoreEntry]:
 def score_items(
     items: List[RawItem],
     client: Optional[LLMClient] = None,
-    batch_size: int = 10,
+    batch_size: int = 5,
 ) -> List[RawItem]:
     """Score une liste d'items via le LLM, par lots, et annote chaque item.
 

@@ -33,20 +33,36 @@ def _build_openalex(cfg: SourceConfig, keywords: List[str]) -> BaseConnector:
     )
 
 
-def _build_tenderned(cfg: SourceConfig, keywords: List[str]) -> BaseConnector:
-    return TenderNedConnector(
-        feed_url=cfg.feed_url or "",
-        keywords=keywords,
+def _build_via_google_news(name: str, cfg: SourceConfig, keywords: List[str]) -> BaseConnector:
+    """Construit un connecteur Google News avec un nom de source specifique.
+
+    Utilise pour les sources dont le flux RSS officiel n'est plus exploitable
+    (TenderNed, Aedes) : on capte leur actualite via Google News (requete `site:`).
+    """
+    connector = GoogleNewsConnector(
+        query=cfg.query or " OR ".join(keywords),
+        keywords=None,
         max_results=cfg.max_results,
     )
+    connector.name = name  # tag des items avec la vraie source
+    return connector
+
+
+def _build_tenderned(cfg: SourceConfig, keywords: List[str]) -> BaseConnector:
+    # Si un feed_url RSS est fourni, on l'utilise ; sinon, via Google News.
+    if cfg.feed_url:
+        return TenderNedConnector(
+            feed_url=cfg.feed_url, keywords=keywords, max_results=cfg.max_results
+        )
+    return _build_via_google_news("tenderned", cfg, keywords)
 
 
 def _build_aedes(cfg: SourceConfig, keywords: List[str]) -> BaseConnector:
-    return AedesConnector(
-        feed_url=cfg.feed_url or "",
-        keywords=keywords,
-        max_results=cfg.max_results,
-    )
+    if cfg.feed_url:
+        return AedesConnector(
+            feed_url=cfg.feed_url, keywords=keywords, max_results=cfg.max_results
+        )
+    return _build_via_google_news("aedes", cfg, keywords)
 
 
 def _build_google_news(cfg: SourceConfig, keywords: List[str]) -> BaseConnector:
@@ -65,10 +81,12 @@ def _build_ted(cfg: SourceConfig, keywords: List[str]) -> BaseConnector:
 
 
 def _build_rechtspraak(cfg: SourceConfig, keywords: List[str]) -> BaseConnector:
-    return RechtspraakConnector(
-        keywords=keywords,
-        max_results=cfg.max_results,
-    )
+    # Si une query de recherche web est fournie, on capte via Google News
+    # (plus fiable pour trouver les decisions pertinentes que le filtre titre).
+    # Sinon, on interroge directement l'API Open Data Rechtspraak.
+    if cfg.query and cfg.query.startswith("site:"):
+        return _build_via_google_news("rechtspraak", cfg, keywords)
+    return RechtspraakConnector(keywords=keywords, max_results=cfg.max_results)
 
 
 # Association nom de source -> fabrique de connecteur.

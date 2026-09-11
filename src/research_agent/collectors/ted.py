@@ -79,9 +79,18 @@ class TEDConnector(BaseConnector):
         self.max_results = max_results
 
     def _build_expert_query(self, since: datetime) -> str:
-        """Construit l'expert query TED : mots-cles + filtre de date de publication."""
+        """Construit l'expert query TED.
+
+        Syntaxe TED : chaque terme utilise l'operateur plein-texte `FT~terme`.
+        Les termes (separes par 'OR' dans la config) sont combines en OR, et on
+        ajoute un filtre de date de publication.
+        """
         date_str = since.date().isoformat().replace("-", "")
-        return f"({self.query}) AND publication-date>={date_str}"
+        terms = [t.strip() for t in self.query.split(" OR ") if t.strip()]
+        if not terms:
+            terms = [self.query.strip() or "ventilation"]
+        ft = " OR ".join(f"FT~{t}" for t in terms)
+        return f"({ft}) AND publication-date>={date_str}"
 
     def _build_payload(self, since: datetime) -> Dict[str, Any]:
         return {

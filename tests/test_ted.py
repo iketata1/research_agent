@@ -119,7 +119,8 @@ def test_respects_max_results():
 def test_expert_query_includes_date_and_keywords():
     connector = _connector()
     q = connector._build_expert_query(SINCE)
-    assert "ventilation OR indoor air quality" in q
+    # Syntaxe TED : operateur plein-texte FT~ par terme.
+    assert "FT~ventilation" in q
     assert "publication-date>=20260101" in q
 
 

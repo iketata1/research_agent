@@ -109,7 +109,7 @@ def _parse(raw: str) -> Dict[int, Classification]:
 def classify_items(
     items: List[RawItem],
     client: Optional[LLMClient] = None,
-    batch_size: int = 10,
+    batch_size: int = 5,
 ) -> List[RawItem]:
     """Classe une liste d'items par lots et enrichit chacun avec son theme.
 
