@@ -55,7 +55,11 @@ def _load_items(db, source=None, theme=None, status=None, limit=500):
         clauses.append("status = ?"); params.append(status)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     params.append(limit)
-    sql = f"SELECT * FROM items {where} ORDER BY relevance DESC NULLS LAST LIMIT ?;"
+    # Tri du plus recent au plus ancien (dates NULL en dernier).
+    sql = (
+        f"SELECT * FROM items {where} "
+        "ORDER BY (published_at IS NULL), published_at DESC LIMIT ?;"
+    )
     with db.connection() as conn:
         return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
@@ -211,9 +215,11 @@ def main() -> None:
                 "SELECT DISTINCT source FROM items ORDER BY source;")]
         c1, c2 = st.columns(2)
         f_source = c1.selectbox("Source", ["toutes"] + sources)
-        f_status = c2.selectbox("Statut", ["kept", "tous", "dropped", "collected"], index=0)
+        # Par defaut "tous" : on affiche TOUS les articles collectes, pas seulement
+        # ceux passes au LLM.
+        f_status = c2.selectbox("Statut", ["tous", "kept", "dropped", "collected"], index=0)
 
-        items = _load_items(db, source=f_source, status=f_status)
+        items = _load_items(db, source=f_source, status=f_status, limit=1000)
         kept = sum(1 for i in items if i.get("status") == "kept")
         m1, m2 = st.columns(2)
         m1.metric("Articles affichés", len(items))
@@ -223,7 +229,8 @@ def main() -> None:
             st.info("Aucun article pour ces filtres. Lancez un run pour peupler la base.")
 
         # Regroupement par CATEGORIE METIER (basee sur la source, fiable),
-        # dans l'ordre de priorite commerciale.
+        # dans l'ordre de priorite commerciale. Dans chaque categorie, tri du
+        # plus RECENT au plus ancien.
         groups = {}
         for row in items:
             groups.setdefault(_category(row), []).append(row)
@@ -232,7 +239,8 @@ def main() -> None:
             rows = groups.get(cat)
             if not rows:
                 continue
-            rows.sort(key=_score, reverse=True)
+            # Tri du plus recent au plus ancien (dates vides = "" -> en dernier).
+            rows.sort(key=lambda r: r.get("published_at") or "", reverse=True)
             st.header(f"{_CATEGORY_LABELS[cat]}  ({len(rows)})")
             for row in rows:
                 _render_article(row)
