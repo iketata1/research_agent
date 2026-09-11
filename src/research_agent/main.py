@@ -18,7 +18,8 @@ import argparse
 from datetime import datetime
 from typing import Optional, Sequence
 
-from research_agent.logging_config import get_logger, setup_logging
+from research_agent.logging_config import get_logger
+from research_agent.monitoring import guard, setup_monitoring
 from research_agent.pipeline import run_daily, run_weekly
 
 logger = get_logger(__name__)
@@ -59,16 +60,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     Returns:
         Code de sortie (0 = succes).
     """
-    setup_logging()
+    setup_monitoring()
     args = build_parser().parse_args(argv)
 
-    if args.command == "daily":
-        run_daily(since=_parse_since(args.since))
-    elif args.command == "weekly":
-        run_weekly(executive=args.executive)
-    elif args.command == "run":
-        run_daily()
-        run_weekly()
+    # Interception des exceptions non gerees : tout crash critique est journalise
+    # et declenche une alerte Telegram avant de faire echouer le processus.
+    with guard(args.command):
+        if args.command == "daily":
+            run_daily(since=_parse_since(args.since))
+        elif args.command == "weekly":
+            run_weekly(executive=args.executive)
+        elif args.command == "run":
+            run_daily()
+            run_weekly()
     return 0
 
 

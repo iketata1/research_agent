@@ -23,6 +23,9 @@ data/*
 # Rapports generes
 reports/
 
+# Logs
+logs/
+
 # Tests / couverture
 .pytest_cache/
 .coverage
