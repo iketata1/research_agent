@@ -182,6 +182,7 @@ class Secrets(BaseSettings):
     openalex_mailto: Optional[str] = None
     telegram_bot_token: Optional[str] = None
     telegram_chat_id: Optional[str] = None
+    telegram_alert_chat_id: Optional[str] = None
     smtp_user: Optional[str] = None
     smtp_password: Optional[str] = None
 
