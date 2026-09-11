@@ -90,13 +90,30 @@ def run_daily(
     # 5. Alertes instantanees pour les items critiques.
     alerts_sent = process_alerts(kept)
 
+    dropped = len(collected) - persisted
     report = {
         "collected": len(collected),
         "prefiltered": len(kept),
         "persisted": persisted,
+        "dropped": dropped,
         "alerts_sent": alerts_sent,
+        "llm_requests": client.usage.requests,
+        "llm_tokens": client.usage.input_tokens + client.usage.output_tokens,
+        "llm_cost": round(client.usage.cost, 6),
     }
-    logger.info("Cycle quotidien termine : %s", report)
+    # Observabilite : synthese du run quotidien.
+    logger.info(
+        "Cycle quotidien termine | collectes=%d, pre-filtre=%d, valides=%d, "
+        "ecartes=%d, alertes=%d | LLM: %d requete(s), %d tokens, cout=%.4f",
+        report["collected"],
+        report["prefiltered"],
+        report["persisted"],
+        report["dropped"],
+        report["alerts_sent"],
+        report["llm_requests"],
+        report["llm_tokens"],
+        report["llm_cost"],
+    )
     return report
 
 
