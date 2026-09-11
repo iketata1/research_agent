@@ -66,6 +66,7 @@ class TEDConnector(BaseConnector):
         query: str,
         max_results: int = 100,
         timeout: float = 20.0,
+        country: str = "NLD",
     ) -> None:
         """Initialise le connecteur.
 
@@ -73,24 +74,30 @@ class TEDConnector(BaseConnector):
             query: mots-cles (ex. "ventilation OR indoor air quality").
             max_results: nombre maximum d'avis a collecter.
             timeout: timeout reseau en secondes.
+            country: code pays de l'acheteur a filtrer (ex. "NLD" pour Pays-Bas).
+                None ou vide = pas de filtre pays (toute l'Europe).
         """
         super().__init__(timeout=timeout)
         self.query = query
         self.max_results = max_results
+        self.country = country
 
     def _build_expert_query(self, since: datetime) -> str:
         """Construit l'expert query TED.
 
         Syntaxe TED : chaque terme utilise l'operateur plein-texte `FT~terme`.
-        Les termes (separes par 'OR' dans la config) sont combines en OR, et on
-        ajoute un filtre de date de publication.
+        Les termes sont combines en OR, avec un filtre de date de publication et,
+        si configure, un filtre pays de l'acheteur (priorite Pays-Bas).
         """
         date_str = since.date().isoformat().replace("-", "")
         terms = [t.strip() for t in self.query.split(" OR ") if t.strip()]
         if not terms:
             terms = [self.query.strip() or "ventilation"]
         ft = " OR ".join(f"FT~{t}" for t in terms)
-        return f"({ft}) AND publication-date>={date_str}"
+        query = f"({ft}) AND publication-date>={date_str}"
+        if self.country:
+            query += f" AND buyer-country={self.country}"
+        return query
 
     def _build_payload(self, since: datetime) -> Dict[str, Any]:
         return {

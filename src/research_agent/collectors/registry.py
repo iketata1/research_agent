@@ -74,9 +74,11 @@ def _build_google_news(cfg: SourceConfig, keywords: List[str]) -> BaseConnector:
 
 
 def _build_ted(cfg: SourceConfig, keywords: List[str]) -> BaseConnector:
+    # Filtre Pays-Bas (buyer-country=NLD) : priorite au marche neerlandais.
     return TEDConnector(
         query=cfg.query or " OR ".join(keywords),
         max_results=cfg.max_results,
+        country="NLD",
     )
 
 

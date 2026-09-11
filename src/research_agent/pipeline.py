@@ -96,6 +96,15 @@ def run_daily(
         kept = [it for it in prefiltered if not already_processed(it.id, database)]
         skipped = len(prefiltered) - len(kept)
 
+        # 2b-bis. Priorite aux sources "demande client" (tenders, news, jurisprudence)
+        # sur la recherche academique, pour que le plafond LLM traite d'abord les
+        # vrais leads potentiels plutot que les articles scientifiques.
+        source_priority = {
+            "tenderned": 0, "ted": 0, "google_news": 1,
+            "rechtspraak": 1, "aedes": 2, "openalex": 3,
+        }
+        kept.sort(key=lambda it: source_priority.get(it.source, 5))
+
         # 2c. Garde-fou de cout : plafonne le nombre d'items envoyes au LLM.
         capped = 0
         if max_llm_items is not None and len(kept) > max_llm_items:
