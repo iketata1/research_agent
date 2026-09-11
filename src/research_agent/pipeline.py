@@ -1,56 +1,138 @@
 """Orchestration du pipeline de bout en bout.
 
-Enchaine les etapes : collect -> normalize -> pre-filter -> llm enrich ->
-store -> report. Les etapes sont volontairement laissees en squelette pour la
-Phase 1 ; elles seront implementees dans les phases suivantes.
+Deux cycles :
 
-Ce module illustre aussi l'usage du logging centralise et de la gestion d'erreurs
-isolee : la panne d'un connecteur (ConnectorError) est journalisee sans
-interrompre la collecte des autres sources.
+- `run_daily(since)` : Ingestion -> Pre-filtre -> Scoring LLM -> Classification
+  -> Persistance -> Alertes instantanees (items critiques).
+- `run_weekly()` : Agregation de la semaine -> Rapport -> Livraison Telegram.
+
+Chaque etape est protegee : une panne de source ou de livraison est journalisee
+sans interrompre le cycle global.
 """
 
 from __future__ import annotations
 
-from research_agent.exceptions import ConnectorError, ResearchAgentError
+from datetime import datetime, timedelta
+from typing import Any, Dict, Optional
+
+from research_agent.config import AppConfig, load_settings
+from research_agent.delivery.alerts import process_alerts
+from research_agent.delivery.formatter import send_weekly_report
+from research_agent.filtering.classifier import classify_items
+from research_agent.filtering.llm_scorer import score_items
+from research_agent.filtering.pre_filter import pre_filter
+from research_agent.llm.client import LLMClient
 from research_agent.logging_config import get_logger, setup_logging
+from research_agent.reporting.aggregator import aggregate_week
+from research_agent.storage import items_dao as dao
+from research_agent.storage.database import Database
+from research_agent.storage.items_dao import ItemStatus
+from research_agent.collectors.registry import build_connectors
 
 logger = get_logger(__name__)
 
 
-def _collect_all(sources: list[str]) -> list[dict]:
-    """Collecte chaque source en isolant les pannes.
+def run_daily(
+    since: Optional[datetime] = None,
+    config: Optional[AppConfig] = None,
+    db: Optional[Database] = None,
+    llm: Optional[LLMClient] = None,
+) -> Dict[str, Any]:
+    """Cycle quotidien : collecte, filtrage, enrichissement, persistance, alertes.
 
-    Une erreur sur une source est journalisee et n'empeche pas les autres.
+    Args:
+        since: borne temporelle basse (par defaut : 24h en arriere).
+        config: configuration ; chargee depuis le YAML si absente.
+        db: base cible ; construite depuis la config si absente.
+        llm: client LLM ; instancie par defaut si absent.
+
+    Returns:
+        Un rapport de cycle (compteurs par etape).
     """
-    collected: list[dict] = []
-    for source in sources:
-        try:
-            logger.info("Collecte de la source '%s'...", source)
-            # TODO Phase 2 : appeler le connecteur reel de la source.
-            # Ici, squelette : on ne collecte rien.
-            items: list[dict] = []
-            collected.extend(items)
-            logger.debug("Source '%s' : %d item(s).", source, len(items))
-        except ConnectorError:
-            # Panne isolee : on journalise et on continue avec les autres sources.
-            logger.exception("Echec du connecteur '%s' (ignore).", source)
-    return collected
+    app = config or load_settings().app
+    database = db or Database.from_config(app.database)
+    database.initialize()
+    reference = since or (datetime.utcnow() - timedelta(days=1))
+    client = llm or LLMClient()
+
+    # 1. Ingestion (chaque connecteur isole ses pannes via collect()).
+    collected = []
+    for connector in build_connectors(app):
+        collected.extend(connector.collect(reference))
+    logger.info("Cycle quotidien : %d item(s) collecte(s).", len(collected))
+
+    # 2. Pre-filtre deterministe (gratuit).
+    kept = pre_filter(collected, app.prefilter)
+
+    # 3. Enrichissement LLM : scoring puis classification.
+    if kept:
+        score_items(kept, client=client)
+        classify_items(kept, client=client)
+
+    # 4. Persistance : upsert des items, puis enrichissement (score/theme/statut).
+    dao.upsert_items(collected, database)
+    threshold_score = int(app.relevance_threshold * 100)
+    persisted = 0
+    for item in kept:
+        score = int(item.metadata.get("llm_score", 0))
+        status = ItemStatus.KEPT if score >= threshold_score else ItemStatus.DROPPED
+        if dao.save_enriched_item(
+            item.id,
+            database,
+            score=score,
+            theme=item.theme,
+            status=status,
+            justification=item.metadata.get("llm_justification"),
+            theme_confidence=item.metadata.get("theme_confidence"),
+        ):
+            persisted += 1
+
+    # 5. Alertes instantanees pour les items critiques.
+    alerts_sent = process_alerts(kept)
+
+    report = {
+        "collected": len(collected),
+        "prefiltered": len(kept),
+        "persisted": persisted,
+        "alerts_sent": alerts_sent,
+    }
+    logger.info("Cycle quotidien termine : %s", report)
+    return report
+
+
+def run_weekly(
+    config: Optional[AppConfig] = None,
+    db: Optional[Database] = None,
+    executive: bool = False,
+) -> Dict[str, Any]:
+    """Cycle hebdomadaire : agregation, rapport, livraison Telegram.
+
+    Args:
+        config: configuration ; chargee depuis le YAML si absente.
+        db: base a interroger ; construite depuis la config si absente.
+        executive: si True, envoie le resume executif.
+
+    Returns:
+        Un rapport de cycle (nombre d'items, statut de livraison).
+    """
+    app = config or load_settings().app
+    database = db or Database.from_config(app.database)
+    database.initialize()
+
+    data = aggregate_week(database, threshold=app.relevance_threshold)
+    delivered = send_weekly_report(data, executive=executive)
+
+    report = {"items": data.total, "delivered": delivered}
+    logger.info("Cycle hebdomadaire termine : %s", report)
+    return report
 
 
 def run() -> None:
-    """Point d'entree du pipeline (squelette Phase 1)."""
+    """Point d'entree ponctuel : un cycle quotidien suivi du rapport hebdo."""
     setup_logging()
-    logger.info("Research Intelligence Agent — pipeline demarre.")
-    try:
-        sources = ["openalex", "tenderned", "ted", "google_news", "aedes", "rechtspraak"]
-        items = _collect_all(sources)
-        logger.info("Collecte terminee : %d item(s) au total.", len(items))
-        # TODO Phase 3+ : normalize -> filter -> store -> report
-    except ResearchAgentError:
-        # Filet de securite pour toute erreur "attendue" du projet.
-        logger.exception("Erreur du pipeline.")
-        raise
-    logger.info("Pipeline termine.")
+    logger.info("Research Intelligence Agent — execution ponctuelle.")
+    run_daily()
+    run_weekly()
 
 
 if __name__ == "__main__":

@@ -16,5 +16,8 @@ python-dotenv>=1.0
 # --- Livraison du rapport (Telegram) ---
 python-telegram-bot>=21.0
 
+# --- Planification ---
+schedule>=1.2
+
 # --- Tests ---
 pytest>=8.0
