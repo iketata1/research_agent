@@ -79,14 +79,62 @@ def _summary(row):
     return meta.get("summary") or []
 
 
+def _freshness(row):
+    """Retourne (badge, libelle) sur la fraicheur de l'article a partir de sa date."""
+    from datetime import datetime
+
+    raw = row.get("published_at")
+    if not raw:
+        return "⚪", "date inconnue"
+    try:
+        # Dates ISO (avec ou sans heure/fuseau).
+        d = datetime.fromisoformat(str(raw).replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return "⚪", str(raw)
+    days = (datetime.utcnow() - d).days
+    if days < 0:
+        days = 0
+    if days <= 7:
+        return "🟢", f"récent ({days} j)"
+    if days <= 30:
+        return "🟡", f"{days} jours"
+    return "🔴", f"ancien ({days} j)"
+
+
+# Categories metier (basees sur la source, plus fiable que le theme LLM).
+# tenders officiels -> Appels d'offres ; actualite -> Prospects ; justice -> Juridique.
+_CATEGORY_BY_SOURCE = {
+    "tenderned": "tenders",
+    "ted": "tenders",
+    "google_news": "prospects",
+    "aedes": "secteur",
+    "rechtspraak": "juridique",
+    "openalex": "secteur",
+}
+
+_CATEGORY_LABELS = {
+    "tenders": "📢 APPELS D'OFFRES (à répondre)",
+    "prospects": "🔥 PROSPECTS (bailleurs en difficulté à contacter)",
+    "juridique": "⚖️ JURIDIQUE (décisions = arguments de vente)",
+    "secteur": "📋 SECTEUR / RÉGLEMENTATION (veille)",
+}
+_CATEGORY_ORDER = ["tenders", "prospects", "juridique", "secteur"]
+
+
+def _category(row) -> str:
+    """Categorie metier d'un article (par source)."""
+    return _CATEGORY_BY_SOURCE.get(row.get("source"), "secteur")
+
+
 def _render_article(row):
     score = _score(row)
-    badge = "❗" if score >= 90 else ("🔴" if score >= 75 else "")
-    st.markdown(f"#### {badge} {row['title']}")
+    prio = "❗" if score >= 90 else ("🔴" if score >= 75 else "")
+    fresh_icon, fresh_label = _freshness(row)
+    st.markdown(f"#### {prio} {row['title']}")
     cols = st.columns([1, 2, 2])
     cols[0].metric("Score", score)
     cols[1].caption(f"Source : {row['source']}")
-    cols[2].caption(f"Date : {row.get('published_at') or 'inconnue'}")
+    cols[2].caption(f"Fraîcheur : {fresh_icon} {fresh_label}")
 
     summary = _summary(row)
     if summary:
@@ -174,25 +222,18 @@ def main() -> None:
         if not items:
             st.info("Aucun article pour ces filtres. Lancez un run pour peupler la base.")
 
-        # Regroupement par categorie/filiere, dans l'ordre du rapport.
-        order = [Theme.OPPORTUNITY, Theme.LEGAL, Theme.RESEARCH, Theme.TECHNOLOGY, Theme.UNKNOWN]
-        labels = {
-            Theme.OPPORTUNITY.value: "🏢 OPPORTUNITÉS (tenders, marchés)",
-            Theme.LEGAL.value: "⚖️ JURIDIQUE (décisions, réglementation)",
-            Theme.RESEARCH.value: "🔬 RECHERCHE (science)",
-            Theme.TECHNOLOGY.value: "📡 TECHNOLOGIE (méthodes, secteur)",
-            Theme.UNKNOWN.value: "📌 AUTRES",
-        }
+        # Regroupement par CATEGORIE METIER (basee sur la source, fiable),
+        # dans l'ordre de priorite commerciale.
         groups = {}
         for row in items:
-            groups.setdefault(row.get("theme") or "unknown", []).append(row)
+            groups.setdefault(_category(row), []).append(row)
 
-        for theme in order:
-            rows = groups.get(theme.value)
+        for cat in _CATEGORY_ORDER:
+            rows = groups.get(cat)
             if not rows:
                 continue
             rows.sort(key=_score, reverse=True)
-            st.header(f"{labels[theme.value]}  ({len(rows)})")
+            st.header(f"{_CATEGORY_LABELS[cat]}  ({len(rows)})")
             for row in rows:
                 _render_article(row)
 
