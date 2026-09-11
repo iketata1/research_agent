@@ -1,0 +1,166 @@
+"""Tableau de bord web (Streamlit) pour explorer la base de connaissances.
+
+Interface locale complementaire a la livraison Telegram : elle permet de
+consulter visuellement tout ce que l'agent a collecte et enrichi.
+
+Lancement :
+    streamlit run src/research_agent/dashboard.py
+
+Onglets :
+- Articles  : liste filtrable (source / theme / statut) + detail (score, resume, lien) ;
+- Recherche : recherche plein texte (FTS5) dans les articles ;
+- Runs      : historique des executions (metriques, cout LLM).
+"""
+
+from __future__ import annotations
+
+import json
+
+import streamlit as st
+
+from research_agent.config import load_settings
+from research_agent.models import Theme
+from research_agent.storage.database import Database
+from research_agent.storage.search import search_items
+
+
+def _db() -> Database:
+    return Database.from_config(load_settings().app.database)
+
+
+def _load_items(db, source=None, theme=None, status=None, limit=500):
+    clauses, params = [], []
+    if source and source != "toutes":
+        clauses.append("source = ?"); params.append(source)
+    if theme and theme != "tous":
+        clauses.append("theme = ?"); params.append(theme)
+    if status and status != "tous":
+        clauses.append("status = ?"); params.append(status)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    params.append(limit)
+    sql = f"SELECT * FROM items {where} ORDER BY relevance DESC NULLS LAST LIMIT ?;"
+    with db.connection() as conn:
+        return [dict(r) for r in conn.execute(sql, params).fetchall()]
+
+
+def _score(row) -> int:
+    try:
+        meta = json.loads(row.get("metadata") or "{}")
+    except (ValueError, TypeError):
+        meta = {}
+    s = meta.get("llm_score")
+    if s is None and row.get("relevance") is not None:
+        s = round(float(row["relevance"]) * 100)
+    return int(s or 0)
+
+
+def _summary(row):
+    try:
+        meta = json.loads(row.get("metadata") or "{}")
+    except (ValueError, TypeError):
+        meta = {}
+    return meta.get("summary") or []
+
+
+def _render_article(row):
+    score = _score(row)
+    badge = "❗" if score >= 90 else ("🔴" if score >= 75 else "")
+    st.markdown(f"#### {badge} {row['title']}")
+    cols = st.columns([1, 2, 2])
+    cols[0].metric("Score", score)
+    cols[1].caption(f"Source : {row['source']}")
+    cols[2].caption(f"Date : {row.get('published_at') or 'inconnue'}")
+
+    summary = _summary(row)
+    if summary:
+        st.markdown("**Résumé :**")
+        for line in summary:
+            if line:
+                st.write(f"• {line}")
+    else:
+        # A defaut de resume genere, on affiche la justification du score.
+        try:
+            meta = json.loads(row.get("metadata") or "{}")
+        except (ValueError, TypeError):
+            meta = {}
+        just = meta.get("llm_justification")
+        if just:
+            st.caption(f"Analyse : {just}")
+
+    st.markdown(f"[Ouvrir la source]({row['url']})")
+    st.divider()
+
+
+def main() -> None:
+    st.set_page_config(page_title="Research Intelligence Agent", page_icon="📊", layout="wide")
+    st.title("📊 Research Intelligence Agent — Tableau de bord")
+    st.caption("Base de connaissances Intra-Air : articles collectés, filtrés et enrichis.")
+
+    db = _db()
+    db.initialize()
+
+    tab_articles, tab_search, tab_runs = st.tabs(["Articles", "Recherche", "Runs"])
+
+    # --- Onglet Articles (groupes par categorie) -----------------------------
+    with tab_articles:
+        with db.connection() as conn:
+            sources = [r["source"] for r in conn.execute(
+                "SELECT DISTINCT source FROM items ORDER BY source;")]
+        c1, c2 = st.columns(2)
+        f_source = c1.selectbox("Source", ["toutes"] + sources)
+        f_status = c2.selectbox("Statut", ["kept", "tous", "dropped", "collected"], index=0)
+
+        items = _load_items(db, source=f_source, status=f_status)
+        kept = sum(1 for i in items if i.get("status") == "kept")
+        m1, m2 = st.columns(2)
+        m1.metric("Articles affichés", len(items))
+        m2.metric("Dont retenus (kept)", kept)
+
+        if not items:
+            st.info("Aucun article pour ces filtres. Lancez un run pour peupler la base.")
+
+        # Regroupement par categorie/filiere, dans l'ordre du rapport.
+        order = [Theme.OPPORTUNITY, Theme.LEGAL, Theme.RESEARCH, Theme.TECHNOLOGY, Theme.UNKNOWN]
+        labels = {
+            Theme.OPPORTUNITY.value: "🏢 OPPORTUNITÉS (tenders, marchés)",
+            Theme.LEGAL.value: "⚖️ JURIDIQUE (décisions, réglementation)",
+            Theme.RESEARCH.value: "🔬 RECHERCHE (science)",
+            Theme.TECHNOLOGY.value: "📡 TECHNOLOGIE (capteurs, solutions)",
+            Theme.UNKNOWN.value: "📌 AUTRES",
+        }
+        groups = {}
+        for row in items:
+            groups.setdefault(row.get("theme") or "unknown", []).append(row)
+
+        for theme in order:
+            rows = groups.get(theme.value)
+            if not rows:
+                continue
+            rows.sort(key=_score, reverse=True)
+            st.header(f"{labels[theme.value]}  ({len(rows)})")
+            for row in rows:
+                _render_article(row)
+
+    # --- Onglet Recherche ----------------------------------------------------
+    with tab_search:
+        query = st.text_input("Recherche plein texte (titre + contenu)")
+        if query:
+            results = search_items(query, limit=50, db=db)
+            st.write(f"{len(results)} résultat(s)")
+            for row in results:
+                _render_article(row)
+
+    # --- Onglet Runs ---------------------------------------------------------
+    with tab_runs:
+        with db.connection() as conn:
+            runs = [dict(r) for r in conn.execute(
+                "SELECT run_type, status, items_collected, items_filtered, "
+                "llm_cost, started_at, finished_at FROM runs ORDER BY id DESC LIMIT 50;")]
+        if runs:
+            st.dataframe(runs, use_container_width=True)
+        else:
+            st.info("Aucun run enregistré pour l'instant.")
+
+
+if __name__ == "__main__":
+    main()

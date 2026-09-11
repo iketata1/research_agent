@@ -50,12 +50,22 @@ def _connector_returning(items):
 
 
 def _llm_returning(score_json, classify_json):
-    """Client LLM factice : premiere reponse = scoring, seconde = classification."""
+    """Client LLM factice : scoring, classification, puis resume(s) a la demande."""
     from research_agent.llm.client import Usage
 
+    summary_json = json.dumps({"lines": ["l1", "l2", "l3"]})
+
+    def _generate(prompt, system_prompt=None, **kw):
+        sp = system_prompt or ""
+        if "score" in sp.lower() or "pertinence" in sp.lower():
+            return score_json
+        if "cat" in sp.lower() or "class" in sp.lower():
+            return classify_json
+        return summary_json  # resume par defaut
+
     client = MagicMock()
-    client.generate.side_effect = [score_json, classify_json]
-    client.usage = Usage()  # usage reel (valeurs numeriques) pour le run tracker
+    client.generate.side_effect = _generate
+    client.usage = Usage()
     return client
 
 

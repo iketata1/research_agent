@@ -25,7 +25,7 @@ from research_agent.llm.client import LLMClient
 from research_agent.logging_config import get_logger, setup_logging
 from research_agent.reporting.aggregator import aggregate_week
 from research_agent.reporting.generator import save_weekly_report
-from research_agent.reporting.summarizer import summarize_item
+from research_agent.reporting.summarizer import summarize_item, summarize_items
 from research_agent.storage import items_dao as dao
 from research_agent.storage.database import Database
 from research_agent.storage.items_dao import ItemStatus
@@ -36,11 +36,30 @@ from research_agent.models import RawItem
 logger = get_logger(__name__)
 
 
+def _persist_summary(database, item_id, summary, summary_text):
+    """Enregistre le resume 3 lignes dans la metadata d'un item (fusion)."""
+    import json as _json
+
+    stored = dao.get_item(item_id, database)
+    if stored is None:
+        return
+    metadata = stored.get("metadata") or {}
+    metadata["summary"] = summary
+    if summary_text:
+        metadata["summary_text"] = summary_text
+    with database.connection() as conn:
+        conn.execute(
+            "UPDATE items SET metadata = ? WHERE id = ?;",
+            (_json.dumps(metadata, ensure_ascii=False), item_id),
+        )
+
+
 def run_daily(
     since: Optional[datetime] = None,
     config: Optional[AppConfig] = None,
     db: Optional[Database] = None,
     llm: Optional[LLMClient] = None,
+    max_llm_items: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Cycle quotidien : collecte, filtrage, enrichissement, persistance, alertes.
 
@@ -49,6 +68,9 @@ def run_daily(
         config: configuration ; chargee depuis le YAML si absente.
         db: base cible ; construite depuis la config si absente.
         llm: client LLM ; instancie par defaut si absent.
+        max_llm_items: garde-fou de cout. Plafonne le nombre d'items envoyes au
+            LLM lors de ce run (les items au-dela sont ignores pour ce cycle).
+            None = pas de plafond.
 
     Returns:
         Un rapport de cycle (compteurs par etape).
@@ -57,7 +79,7 @@ def run_daily(
     database = db or Database.from_config(app.database)
     database.initialize()
     reference = since or (datetime.utcnow() - timedelta(days=1))
-    client = llm or LLMClient()
+    client = llm or LLMClient(config=app.llm)
 
     with run_tracker(database, "daily") as metrics:
         # 1. Ingestion (chaque connecteur isole ses pannes via collect()).
@@ -73,6 +95,16 @@ def run_daily(
         # jamais traites auparavant (evite la refacturation inutile).
         kept = [it for it in prefiltered if not already_processed(it.id, database)]
         skipped = len(prefiltered) - len(kept)
+
+        # 2c. Garde-fou de cout : plafonne le nombre d'items envoyes au LLM.
+        capped = 0
+        if max_llm_items is not None and len(kept) > max_llm_items:
+            capped = len(kept) - max_llm_items
+            logger.warning(
+                "Garde-fou LLM : %d item(s) plafonne(s) (%d -> %d).",
+                capped, len(kept), max_llm_items,
+            )
+            kept = kept[:max_llm_items]
         if skipped:
             logger.info("Anti-doublon : %d item(s) deja traite(s) ignore(s).", skipped)
 
@@ -81,9 +113,18 @@ def run_daily(
             score_items(kept, client=client)
             classify_items(kept, client=client)
 
-        # 4. Persistance : upsert des items, puis enrichissement (score/theme/statut).
-        dao.upsert_items(collected, database)
+        # 3b. Resume 3 lignes pour les items retenus (score >= seuil) uniquement,
+        # afin qu'ils soient directement lisibles dans le dashboard et le rapport.
         threshold_score = int(app.relevance_threshold * 100)
+        to_summarize = [
+            it for it in kept
+            if int(it.metadata.get("llm_score", 0)) >= threshold_score
+        ]
+        if to_summarize:
+            summarize_items(to_summarize, client=client)
+
+        # 4. Persistance : upsert des items, puis enrichissement (score/theme/statut/resume).
+        dao.upsert_items(collected, database)
         persisted = 0
         for item in kept:
             score = int(item.metadata.get("llm_score", 0))
@@ -98,6 +139,10 @@ def run_daily(
                 theme_confidence=item.metadata.get("theme_confidence"),
             ):
                 persisted += 1
+            # Persistance du resume 3 lignes (si genere) dans la metadata.
+            summary = item.metadata.get("summary")
+            if summary:
+                _persist_summary(database, item.id, summary, item.metadata.get("summary_text"))
 
         # 5. Alertes instantanees pour les items critiques.
         alerts_sent = process_alerts(kept)
@@ -210,7 +255,7 @@ def run_weekly(
     app = config or load_settings().app
     database = db or Database.from_config(app.database)
     database.initialize()
-    client = llm or LLMClient()
+    client = llm or LLMClient(config=app.llm)
 
     with run_tracker(database, "weekly") as metrics:
         # 1. Organize : agregation par theme, triee par score.

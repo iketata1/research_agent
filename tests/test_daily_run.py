@@ -45,12 +45,21 @@ def _connector(items):
 
 
 def _llm(score, category="research", usage_cost=0.0012):
-    """Client LLM factice avec suivi d'usage simule."""
+    """Client LLM factice : route selon le prompt (scoring / classification / resume)."""
     client = MagicMock(spec=LLMClient)
-    client.generate.side_effect = [
-        json.dumps({"scores": [{"index": 0, "score": score, "justification": "j"}]}),
-        json.dumps({"classifications": [{"index": 0, "category": category, "confidence": 0.8}]}),
-    ]
+    score_json = json.dumps({"scores": [{"index": 0, "score": score, "justification": "j"}]})
+    class_json = json.dumps({"classifications": [{"index": 0, "category": category, "confidence": 0.8}]})
+    summary_json = json.dumps({"lines": ["l1", "l2", "l3"]})
+
+    def _generate(prompt, system_prompt=None, **kw):
+        sp = (system_prompt or "").lower()
+        if "pertinence" in sp or "score" in sp:
+            return score_json
+        if "categor" in sp or "classe" in sp:
+            return class_json
+        return summary_json
+
+    client.generate.side_effect = _generate
     usage = MagicMock()
     usage.requests = 2
     usage.input_tokens = 1000
