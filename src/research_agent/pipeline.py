@@ -24,10 +24,13 @@ from research_agent.filtering.pre_filter import pre_filter
 from research_agent.llm.client import LLMClient
 from research_agent.logging_config import get_logger, setup_logging
 from research_agent.reporting.aggregator import aggregate_week
+from research_agent.reporting.generator import save_weekly_report
+from research_agent.reporting.summarizer import summarize_item
 from research_agent.storage import items_dao as dao
 from research_agent.storage.database import Database
 from research_agent.storage.items_dao import ItemStatus
 from research_agent.collectors.registry import build_connectors
+from research_agent.models import RawItem
 
 logger = get_logger(__name__)
 
@@ -117,30 +120,110 @@ def run_daily(
     return report
 
 
+def _ensure_summaries(
+    data,
+    database: Database,
+    llm: LLMClient,
+) -> int:
+    """Genere le resume 3 lignes des items retenus qui n'en ont pas encore.
+
+    Le resume est persiste dans la metadata de l'item (tracabilite) et injecte
+    dans l'objet du rapport. Un echec de resume est isole (item laisse tel quel).
+
+    Returns:
+        Le nombre de resumes generes.
+    """
+    generated = 0
+    for items in data.groups.values():
+        for report_item in items:
+            if report_item.summary:
+                continue
+            proxy = RawItem(
+                source=report_item.source,
+                title=report_item.title,
+                url=report_item.url,
+                raw_text=report_item.title,
+            )
+            try:
+                summary = summarize_item(proxy, client=llm)
+            except Exception:
+                logger.exception("Resume echoue pour '%s' (ignore).", report_item.id)
+                continue
+            report_item.summary = summary.lines
+            # Persistance du resume dans la metadata de l'item stocke.
+            stored = dao.get_item(report_item.id, database)
+            if stored is not None:
+                metadata = stored.get("metadata") or {}
+                metadata["summary"] = summary.lines
+                metadata["summary_text"] = summary.text
+                with database.connection() as conn:
+                    import json as _json
+
+                    conn.execute(
+                        "UPDATE items SET metadata = ? WHERE id = ?;",
+                        (_json.dumps(metadata, ensure_ascii=False), report_item.id),
+                    )
+            generated += 1
+    return generated
+
+
 def run_weekly(
     config: Optional[AppConfig] = None,
     db: Optional[Database] = None,
+    llm: Optional[LLMClient] = None,
     executive: bool = False,
+    output_dir: str = "reports/",
 ) -> Dict[str, Any]:
-    """Cycle hebdomadaire : agregation, rapport, livraison Telegram.
+    """Cycle hebdomadaire : Organize -> Summarize -> Export -> Deliver.
+
+    Etapes :
+    1. agrege les items valides des 7 derniers jours par categorie ;
+    2. genere les resumes 3 lignes manquants (angle valeur metier) ;
+    3. exporte le rapport Markdown dans le repertoire des rapports ;
+    4. envoie le rapport via Telegram (avec decoupage si necessaire).
 
     Args:
         config: configuration ; chargee depuis le YAML si absente.
         db: base a interroger ; construite depuis la config si absente.
-        executive: si True, envoie le resume executif.
+        llm: client LLM ; instancie par defaut si absent.
+        executive: si True, envoie le resume executif sur Telegram.
+        output_dir: repertoire d'export du fichier Markdown.
 
     Returns:
-        Un rapport de cycle (nombre d'items, statut de livraison).
+        Un rapport de cycle (items, resumes generes, chemin du fichier, livraison).
     """
     app = config or load_settings().app
     database = db or Database.from_config(app.database)
     database.initialize()
+    client = llm or LLMClient()
 
+    # 1. Organize : agregation par theme, triee par score.
     data = aggregate_week(database, threshold=app.relevance_threshold)
+
+    # 2. Summarize : resumes manquants pour les items retenus.
+    summaries_generated = _ensure_summaries(data, database, client)
+
+    # 3. Export : ecriture du fichier Markdown.
+    file_path = save_weekly_report(
+        output_dir=output_dir, data=data, usage=client.usage
+    )
+
+    # 4. Deliver : envoi Telegram.
     delivered = send_weekly_report(data, executive=executive)
 
-    report = {"items": data.total, "delivered": delivered}
-    logger.info("Cycle hebdomadaire termine : %s", report)
+    report = {
+        "items": data.total,
+        "summaries_generated": summaries_generated,
+        "file": file_path,
+        "delivered": delivered,
+    }
+    logger.info(
+        "Cycle hebdomadaire termine | items=%d, resumes=%d, fichier=%s, livre=%s",
+        report["items"],
+        report["summaries_generated"],
+        report["file"],
+        report["delivered"],
+    )
     return report
 
 
