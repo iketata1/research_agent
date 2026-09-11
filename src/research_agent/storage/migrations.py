@@ -135,11 +135,25 @@ CREATE INDEX IF NOT EXISTS idx_items_content_hash ON items (content_hash);
 """
 
 
+# --- Metriques LLM par run (migration v4) ------------------------------------
+
+# Enrichit la table `runs` avec les compteurs de filtrage et le cout/tokens LLM
+# cumules, pour un audit complet de chaque execution.
+_V4_SQL = """
+ALTER TABLE runs ADD COLUMN run_type TEXT;
+ALTER TABLE runs ADD COLUMN items_filtered INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN llm_input_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN llm_output_tokens INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE runs ADD COLUMN llm_cost REAL NOT NULL DEFAULT 0;
+"""
+
+
 # Liste ordonnee des migrations : (version, description, SQL).
 MIGRATIONS: List[Tuple[int, str, str]] = [
     (1, "schema initial : items, summaries, runs", _V1_SQL),
     (2, "recherche plein texte FTS5 (items_fts + triggers)", _V2_SQL),
     (3, "suivi des mises a jour de contenu (content_hash, updated_at)", _V3_SQL),
+    (4, "metriques LLM par run (run_type, items_filtered, tokens, cout)", _V4_SQL),
 ]
 
 

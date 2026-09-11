@@ -29,6 +29,7 @@ from research_agent.reporting.summarizer import summarize_item
 from research_agent.storage import items_dao as dao
 from research_agent.storage.database import Database
 from research_agent.storage.items_dao import ItemStatus
+from research_agent.storage.runs import already_processed, run_tracker
 from research_agent.collectors.registry import build_connectors
 from research_agent.models import RawItem
 
@@ -58,45 +59,59 @@ def run_daily(
     reference = since or (datetime.utcnow() - timedelta(days=1))
     client = llm or LLMClient()
 
-    # 1. Ingestion (chaque connecteur isole ses pannes via collect()).
-    collected = []
-    for connector in build_connectors(app):
-        collected.extend(connector.collect(reference))
-    logger.info("Cycle quotidien : %d item(s) collecte(s).", len(collected))
+    with run_tracker(database, "daily") as metrics:
+        # 1. Ingestion (chaque connecteur isole ses pannes via collect()).
+        collected = []
+        for connector in build_connectors(app):
+            collected.extend(connector.collect(reference))
+        logger.info("Cycle quotidien : %d item(s) collecte(s).", len(collected))
 
-    # 2. Pre-filtre deterministe (gratuit).
-    kept = pre_filter(collected, app.prefilter)
+        # 2. Pre-filtre deterministe (gratuit).
+        prefiltered = pre_filter(collected, app.prefilter)
 
-    # 3. Enrichissement LLM : scoring puis classification.
-    if kept:
-        score_items(kept, client=client)
-        classify_items(kept, client=client)
+        # 2b. Anti-doublon inter-semaines : on n'envoie au LLM que les items
+        # jamais traites auparavant (evite la refacturation inutile).
+        kept = [it for it in prefiltered if not already_processed(it.id, database)]
+        skipped = len(prefiltered) - len(kept)
+        if skipped:
+            logger.info("Anti-doublon : %d item(s) deja traite(s) ignore(s).", skipped)
 
-    # 4. Persistance : upsert des items, puis enrichissement (score/theme/statut).
-    dao.upsert_items(collected, database)
-    threshold_score = int(app.relevance_threshold * 100)
-    persisted = 0
-    for item in kept:
-        score = int(item.metadata.get("llm_score", 0))
-        status = ItemStatus.KEPT if score >= threshold_score else ItemStatus.DROPPED
-        if dao.save_enriched_item(
-            item.id,
-            database,
-            score=score,
-            theme=item.theme,
-            status=status,
-            justification=item.metadata.get("llm_justification"),
-            theme_confidence=item.metadata.get("theme_confidence"),
-        ):
-            persisted += 1
+        # 3. Enrichissement LLM : scoring puis classification.
+        if kept:
+            score_items(kept, client=client)
+            classify_items(kept, client=client)
 
-    # 5. Alertes instantanees pour les items critiques.
-    alerts_sent = process_alerts(kept)
+        # 4. Persistance : upsert des items, puis enrichissement (score/theme/statut).
+        dao.upsert_items(collected, database)
+        threshold_score = int(app.relevance_threshold * 100)
+        persisted = 0
+        for item in kept:
+            score = int(item.metadata.get("llm_score", 0))
+            status = ItemStatus.KEPT if score >= threshold_score else ItemStatus.DROPPED
+            if dao.save_enriched_item(
+                item.id,
+                database,
+                score=score,
+                theme=item.theme,
+                status=status,
+                justification=item.metadata.get("llm_justification"),
+                theme_confidence=item.metadata.get("theme_confidence"),
+            ):
+                persisted += 1
+
+        # 5. Alertes instantanees pour les items critiques.
+        alerts_sent = process_alerts(kept)
+
+        # Metriques du run (audit persiste dans la table `runs`).
+        metrics.items_collected = len(collected)
+        metrics.items_filtered = len(kept)
+        metrics.apply_usage(client.usage)
 
     dropped = len(collected) - persisted
     report = {
         "collected": len(collected),
         "prefiltered": len(kept),
+        "skipped_duplicates": skipped,
         "persisted": persisted,
         "dropped": dropped,
         "alerts_sent": alerts_sent,
@@ -197,19 +212,24 @@ def run_weekly(
     database.initialize()
     client = llm or LLMClient()
 
-    # 1. Organize : agregation par theme, triee par score.
-    data = aggregate_week(database, threshold=app.relevance_threshold)
+    with run_tracker(database, "weekly") as metrics:
+        # 1. Organize : agregation par theme, triee par score.
+        data = aggregate_week(database, threshold=app.relevance_threshold)
 
-    # 2. Summarize : resumes manquants pour les items retenus.
-    summaries_generated = _ensure_summaries(data, database, client)
+        # 2. Summarize : resumes manquants pour les items retenus.
+        summaries_generated = _ensure_summaries(data, database, client)
 
-    # 3. Export : ecriture du fichier Markdown.
-    file_path = save_weekly_report(
-        output_dir=output_dir, data=data, usage=client.usage
-    )
+        # 3. Export : ecriture du fichier Markdown.
+        file_path = save_weekly_report(
+            output_dir=output_dir, data=data, usage=client.usage
+        )
 
-    # 4. Deliver : envoi Telegram.
-    delivered = send_weekly_report(data, executive=executive)
+        # 4. Deliver : envoi Telegram.
+        delivered = send_weekly_report(data, executive=executive)
+
+        metrics.items_collected = data.total
+        metrics.items_filtered = data.total
+        metrics.apply_usage(client.usage)
 
     report = {
         "items": data.total,

@@ -51,8 +51,11 @@ def _connector_returning(items):
 
 def _llm_returning(score_json, classify_json):
     """Client LLM factice : premiere reponse = scoring, seconde = classification."""
+    from research_agent.llm.client import Usage
+
     client = MagicMock()
     client.generate.side_effect = [score_json, classify_json]
+    client.usage = Usage()  # usage reel (valeurs numeriques) pour le run tracker
     return client
 
 
@@ -104,7 +107,10 @@ def test_irrelevant_item_dropped_by_prefilter(db):
         raw_text="About highways and asphalt.",
     )
     connector = _connector_returning([noise])
-    llm = MagicMock()  # ne doit jamais etre appele
+    from research_agent.llm.client import Usage
+
+    llm = MagicMock()  # ne doit jamais etre appele (generate)
+    llm.usage = Usage()  # usage reel pour le run tracker
 
     with patch.object(pipeline, "build_connectors", return_value=[connector]):
         report = pipeline.run_daily(since=SINCE, config=_config(), db=db, llm=llm)

@@ -64,7 +64,7 @@ def test_schema_and_migrations_applied(db):
             "SELECT MAX(version) AS v FROM schema_version;"
         ).fetchone()["v"]
     assert {"items", "summaries", "runs", "items_fts"} <= tables
-    assert version == 3  # v1 schema + v2 FTS5 + v3 content_hash
+    assert version == 4  # v1 schema + v2 FTS5 + v3 content_hash + v4 metriques runs
 
 
 # --- Insertion + recuperation par ID -----------------------------------------
