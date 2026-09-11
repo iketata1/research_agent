@@ -21,3 +21,7 @@ schedule>=1.2
 
 # --- Tests ---
 pytest>=8.0
+
+# --- Interface & analyse ---
+streamlit>=1.40
+beautifulsoup4>=4.12

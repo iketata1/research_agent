@@ -19,9 +19,26 @@ import json
 import streamlit as st
 
 from research_agent.config import load_settings
+from research_agent.deep_research import deep_analyze
+from research_agent.llm.client import LLMClient
 from research_agent.models import Theme
 from research_agent.storage.database import Database
 from research_agent.storage.search import search_items
+
+
+def _save_deep(db, item_id, analysis):
+    """Persiste le resultat de la deep research dans la metadata de l'item."""
+    with db.connection() as conn:
+        row = conn.execute("SELECT metadata FROM items WHERE id = ?;", (item_id,)).fetchone()
+        if row is None:
+            return
+        try:
+            meta = json.loads(row["metadata"] or "{}")
+        except (ValueError, TypeError):
+            meta = {}
+        meta["deep_research"] = analysis
+        conn.execute("UPDATE items SET metadata = ? WHERE id = ?;",
+                     (json.dumps(meta, ensure_ascii=False), item_id))
 
 
 def _db() -> Database:
@@ -88,7 +105,45 @@ def _render_article(row):
             st.caption(f"Analyse : {just}")
 
     st.markdown(f"[Ouvrir la source]({row['url']})")
+
+    # Deep research : analyse approfondie a la demande.
+    try:
+        meta = json.loads(row.get("metadata") or "{}")
+    except (ValueError, TypeError):
+        meta = {}
+    existing = meta.get("deep_research")
+
+    if existing:
+        _render_deep(existing)
+    else:
+        if st.button("🔎 Deep research", key=f"deep_{row['id']}"):
+            with st.spinner("Analyse approfondie en cours..."):
+                try:
+                    analysis = deep_analyze(
+                        row["url"], title=row["title"], client=LLMClient(config=load_settings().app.llm)
+                    )
+                    _save_deep(_db(), row["id"], analysis)
+                    _render_deep(analysis)
+                except Exception as exc:  # affichage propre en cas d'echec
+                    st.error(f"Deep research indisponible pour cet article : {exc}")
+
     st.divider()
+
+
+def _render_deep(a):
+    """Affiche une fiche de deep research (structure analyste Intra-Air)."""
+    niveau = (a.get("niveau") or "ACT").upper()
+    icon = "🔥" if niveau == "HIGH" else "🟠"
+    titre = a.get("titre_analyse") or "Analyse approfondie"
+    st.markdown(f"**{icon} Deep research [{niveau}] — {titre}**")
+    if a.get("organisation"):
+        st.write(f"**Organisation :** {a['organisation']}")
+    if a.get("contexte_resume"):
+        st.write(f"**Contexte :** {a['contexte_resume']}")
+    if a.get("besoin_ou_opportunite"):
+        st.write(f"**Besoin / opportunité :** {a['besoin_ou_opportunite']}")
+    if a.get("action"):
+        st.success(f"**Action recommandée :** {a['action']}")
 
 
 def main() -> None:
